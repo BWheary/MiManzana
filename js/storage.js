@@ -1,5 +1,6 @@
 (function (global) {
   const STORAGE_KEY = "mi-manzana-data";
+  const PHOTOS_CACHE_KEY = "mi-manzana-photos";
   const PREFS_KEY = "mi-manzana-prefs";
 
   function todayIso() {
@@ -51,6 +52,16 @@
       activeTeam: getState().activeTeam,
       activeNav: getState().activeNav
     }));
+  }
+
+  function rosterPlayerIds(shared) {
+    const ids = new Set();
+    ["blue", "orange"].forEach((team) => {
+      (shared.teams?.[team] || []).forEach((p) => {
+        if (p?.id) ids.add(`${team}:${p.id}`);
+      });
+    });
+    return ids;
   }
 
   function rosterPlayerCount(shared) {
@@ -124,8 +135,49 @@
     };
   }
 
-  function cacheShared(shared) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...shared, revision: localRevision }));
+  function extractSharedForCache() {
+    const shared = extractShared();
+    return {
+      teams: {
+        blue: stripRosterPhotos(shared.teams.blue),
+        orange: stripRosterPhotos(shared.teams.orange)
+      },
+      lineups: {
+        blue: slimLineup(shared.lineups.blue),
+        orange: slimLineup(shared.lineups.orange)
+      }
+    };
+  }
+
+  function loadPhotosFromCache() {
+    try {
+      const raw = localStorage.getItem(PHOTOS_CACHE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  function cacheShared() {
+    const payload = { ...extractSharedForCache(), revision: localRevision };
+    const photos = extractPhotos();
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+      if (Object.keys(photos.blue).length || Object.keys(photos.orange).length) {
+        localStorage.setItem(PHOTOS_CACHE_KEY, JSON.stringify(photos));
+      } else {
+        localStorage.removeItem(PHOTOS_CACHE_KEY);
+      }
+    } catch (err) {
+      console.warn("Cache save failed (likely storage quota); saving without photos.", err);
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
+        localStorage.removeItem(PHOTOS_CACHE_KEY);
+      } catch (err2) {
+        console.error("Could not save local cache:", err2);
+      }
+    }
   }
 
   function loadSharedFromCache() {
@@ -135,7 +187,16 @@
       const parsed = JSON.parse(raw);
       localRevision = parsed.revision || 0;
       const { revision: _rev, ...data } = parsed;
-      return normalizeShared(data);
+      let photos = loadPhotosFromCache();
+      if (!photos) {
+        photos = { blue: {}, orange: {} };
+        ["blue", "orange"].forEach((team) => {
+          (data.teams?.[team] || []).forEach((player) => {
+            if (player?.photo) photos[team][player.id] = player.photo;
+          });
+        });
+      }
+      return normalizeShared(data, photos);
     } catch {
       return normalizeShared(defaultData());
     }
@@ -206,7 +267,13 @@
     const localData = local || extractShared();
     const remoteCount = rosterPlayerCount({ teams: remote.teams || {} });
     const localCount = rosterPlayerCount(localData);
-    return remoteCount < localCount;
+    if (remoteCount < localCount) return true;
+    const localIds = rosterPlayerIds(localData);
+    const remoteIds = rosterPlayerIds({ teams: remote.teams || {} });
+    for (const id of localIds) {
+      if (!remoteIds.has(id)) return true;
+    }
+    return false;
   }
 
   function sanitizeForFirestore(value) {
@@ -225,11 +292,12 @@
     pendingPush = false;
     if (!state || applyingRemote || !global.MiManzana.FirebaseSync?.isConfigured()) return;
     localRevision += 1;
-    cacheShared(extractShared());
+    cacheShared();
     const payload = sanitizeForFirestore(extractSharedForRemote());
     const photos = sanitizeForFirestore(extractPhotos());
     global.MiManzana.FirebaseSync.pushShared(payload, photos).catch((err) => {
       localRevision = Math.max(0, localRevision - 1);
+      cacheShared();
       console.error("Firebase save failed:", err);
       global.MiManzana?.App?.setSyncStatus?.("error");
       const msg = err?.code === "invalid-argument" || String(err?.message || "").includes("longer than")
@@ -254,7 +322,7 @@
     const prefs = { activeTeam: getState().activeTeam, activeNav: getState().activeNav };
     const shared = normalizeShared(remote, photos);
     state = buildState(shared, prefs);
-    cacheShared(extractShared());
+    cacheShared();
     applyingRemote = false;
     return true;
   }
@@ -273,8 +341,7 @@
 
   function save() {
     if (!state) return;
-    const shared = extractShared();
-    cacheShared(shared);
+    cacheShared();
     savePrefs();
     if (applyingRemote || !global.MiManzana.FirebaseSync?.isConfigured()) return;
     if (batching) {

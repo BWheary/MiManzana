@@ -153,7 +153,7 @@
     Storage.load();
     FirebaseSync.init(
       (info) => bootstrapApp(info),
-      (shared) => handleRemoteUpdate(shared)
+      (shared, photos) => handleRemoteUpdate(shared, photos)
     );
   }
 
