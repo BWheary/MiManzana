@@ -109,11 +109,22 @@
     setTimeout(() => { document.body.classList.remove("printing"); container.innerHTML = ""; }, 500);
   }
 
+  function refreshCurrentView() {
+    ["blue", "orange"].forEach((t) => Lineup.ensureLineupForTeam(t, { persist: false }));
+    const nav = Storage.getNav();
+    if (nav === "team") {
+      if (!Roster.refreshRosterGrid()) render();
+      return;
+    }
+    if (nav === "home") {
+      if (!Lineup.refreshLineupView()) render();
+    }
+  }
+
   function handleRemoteUpdate(shared) {
     Storage.applyRemoteShared(shared);
     if (!bootstrapped) return;
-    ["blue", "orange"].forEach((t) => Lineup.ensureLineupForTeam(t));
-    render();
+    refreshCurrentView();
   }
 
   function bootstrapApp(info) {
@@ -147,6 +158,6 @@
   }
 
   global.MiManzana = global.MiManzana || {};
-  global.MiManzana.App = { init, render, refresh: render, refreshDashboard, updatePreviewOnly, printCards, setSyncStatus };
+  global.MiManzana.App = { init, render, refresh: render, refreshDashboard, updatePreviewOnly, refreshCurrentView, printCards, setSyncStatus };
   document.addEventListener("DOMContentLoaded", init);
 })(window);

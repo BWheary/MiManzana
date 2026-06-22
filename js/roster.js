@@ -34,13 +34,25 @@
     </article>`;
   }
 
-  function renderRosterPanel() {
+  function renderRosterGrid() {
     const team = Storage.getTeam();
     const roster = sortRosterByName(Storage.getRoster(team));
-    const teamLabel = team === "blue" ? "Team Blue" : "Team Orange";
-    const grid = roster.length
+    return roster.length
       ? roster.map((p) => renderTeamPlayerCard(p)).join("")
       : `<p class="empty-msg team-roster-empty">No players yet. Open Player Pool below to add your first player.</p>`;
+  }
+
+  function refreshRosterGrid() {
+    const grid = document.getElementById("team-roster-grid");
+    if (!grid) return false;
+    grid.innerHTML = renderRosterGrid();
+    return true;
+  }
+
+  function renderRosterPanel() {
+    const team = Storage.getTeam();
+    const teamLabel = team === "blue" ? "Team Blue" : "Team Orange";
+    const grid = renderRosterGrid();
 
     return `<div class="roster-page">
       <header class="panel-top team-page-header">
@@ -335,6 +347,6 @@
   }
 
   global.MiManzana = global.MiManzana || {};
-  global.MiManzana.Roster = { renderRosterPanel, renderTeamPlayerCard, bindEvents, resetRosterForm, sortRosterByName };
+  global.MiManzana.Roster = { renderRosterPanel, renderTeamPlayerCard, bindEvents, resetRosterForm, sortRosterByName, refreshRosterGrid };
 })(window);
 

@@ -24,7 +24,8 @@
     return slot;
   }
 
-  function syncAllLinkedSlotsFromRoster(team) {
+  function syncAllLinkedSlotsFromRoster(team, options = {}) {
+    const persist = options.persist !== false;
     const lineup = Storage.getLineup(team);
     const roster = Storage.getRoster(team);
     lineup.slots.forEach((slot) => {
@@ -32,7 +33,7 @@
       const player = roster.find((p) => p.id === slot.playerId);
       if (player) applyPlayerToSlot(slot, player);
     });
-    Storage.setLineup(team, lineup);
+    if (persist) Storage.setLineup(team, lineup);
   }
 
   function syncRosterPlayerToLineup(team, playerId) {
@@ -49,7 +50,8 @@
     if (changed) Storage.setLineup(team, lineup);
   }
 
-  function ensureLineupForTeam(team) {
+  function ensureLineupForTeam(team, options = {}) {
+    const persist = options.persist !== false;
     const lineup = Storage.getLineup(team);
     const roster = Storage.getRoster(team);
     const today = Storage.todayIso();
@@ -68,9 +70,9 @@
       if (lineup.slots.length > 9) lineup.slots = lineup.slots.slice(0, 9);
       lineup.slots.forEach((slot, i) => { slot.order = i + 1; });
     }
-    if (lineup.slots.length) syncAllLinkedSlotsFromRoster(team);
+    if (lineup.slots.length) syncAllLinkedSlotsFromRoster(team, { persist });
     if (!lineup.selectedSlotId && lineup.slots.length) lineup.selectedSlotId = lineup.slots[0].id;
-    Storage.setLineup(team, lineup);
+    if (persist) Storage.setLineup(team, lineup);
     return lineup;
   }
 
@@ -86,16 +88,13 @@
     return `<select class="lineup-player-select" data-slot-id="${slot.id}" aria-label="Select player for order ${slot.order}"><option value="">— Select —</option>${opts}</select>`;
   }
 
-  function renderDashboard() {
+  function renderLineupRowsHtml() {
     const team = Storage.getTeam();
-    const lineup = ensureLineupForTeam(team);
+    const lineup = Storage.getLineup(team);
     const slots = lineup.slots;
     const roster = Storage.getRoster(team);
-    const selected = Storage.getSelectedSlot(team);
-    const selectedId = selected?.id || "";
-    const date = lineup.lineupDate || Storage.todayIso();
-
-    const rows = slots.map((slot) => {
+    const selectedId = lineup.selectedSlotId || "";
+    return slots.map((slot) => {
       const zone = Zones.getZone(slot.zone);
       const isActive = slot.id === selectedId ? " active" : "";
       return `<tr class="lineup-row${isActive}" data-slot-id="${slot.id}">
@@ -104,6 +103,31 @@
         <td class="manzana-cell">${Zones.renderZoneIcon(slot.zone, 22, slot.batterHand)}<span>${zone.shortLabel}</span></td>
       </tr>`;
     }).join("");
+  }
+
+  function refreshLineupView() {
+    const tbody = document.getElementById("lineup-body");
+    if (!tbody) return false;
+    const team = Storage.getTeam();
+    const lineup = Storage.getLineup(team);
+    tbody.innerHTML = renderLineupRowsHtml();
+    const editor = document.getElementById("editor-col");
+    if (editor) {
+      const selected = Storage.getSelectedSlot(team);
+      editor.innerHTML = renderEditor(selected, team);
+    }
+    const preview = document.getElementById("preview-col");
+    if (preview) preview.innerHTML = Cards.renderPrintColumn(lineup.slots, lineup.cardOptions);
+    return true;
+  }
+
+  function renderDashboard() {
+    const team = Storage.getTeam();
+    const lineup = ensureLineupForTeam(team);
+    const slots = lineup.slots;
+    const selected = Storage.getSelectedSlot(team);
+    const date = lineup.lineupDate || Storage.todayIso();
+    const rows = renderLineupRowsHtml();
 
     return `<div class="dashboard">
       <section class="dash-panel lineup-panel">
@@ -260,7 +284,7 @@
       persistFromEditor();
       global.MiManzana.App.refreshDashboard();
     });
-    document.getElementById("zone-picker")?.addEventListener("click", (e) => {
+    document.getElementById("editor-col")?.addEventListener("click", (e) => {
       const btn = e.target.closest(".zone-pick-btn");
       if (btn) setZone(btn.dataset.zone);
     });
@@ -273,7 +297,8 @@
   global.MiManzana = global.MiManzana || {};
   global.MiManzana.Lineup = {
     renderDashboard, renderEditor, bindEvents, createEmptySlot, ensureLineupForTeam,
-    persistFromEditor, readCardOptions, applyPlayerToSlot, syncRosterPlayerToLineup, syncAllLinkedSlotsFromRoster
+    persistFromEditor, readCardOptions, applyPlayerToSlot, syncRosterPlayerToLineup, syncAllLinkedSlotsFromRoster,
+    refreshLineupView
   };
 })(window);
 
