@@ -97,7 +97,7 @@
     Lineup.persistFromEditor();
     const team = Storage.getTeam();
     const lineup = Storage.getLineup(team);
-    const filled = lineup.slots.filter((s) => s.name.trim());
+    const filled = lineup.slots.filter((s) => (s.name || "").trim());
     if (!filled.length) {
       alert("Add players to the lineup before printing.");
       return;

@@ -29,8 +29,27 @@
   let pendingPush = false;
   let localRevision = 0;
 
+  function normalizeSlot(slot) {
+    if (!slot?.id) return null;
+    return {
+      id: slot.id,
+      order: slot.order || 0,
+      playerId: slot.playerId || "",
+      name: slot.name || "",
+      jersey: slot.jersey || "",
+      position: slot.position || "",
+      zone: slot.zone || "middle",
+      batterHand: slot.batterHand || "R",
+      photo: slot.photo || "",
+      notes: Array.isArray(slot.notes) ? slot.notes.slice(0, 2) : ["", ""],
+      zoneOverride: !!slot.zoneOverride,
+      selected: slot.selected !== false
+    };
+  }
+
   function mergeLineup(raw) {
-    return { ...defaultLineup(), ...raw, cardOptions: { ...defaultCardOptions(), ...(raw?.cardOptions || {}) }, slots: raw?.slots || [] };
+    const slots = (raw?.slots || []).map(normalizeSlot).filter(Boolean);
+    return { ...defaultLineup(), ...raw, cardOptions: { ...defaultCardOptions(), ...(raw?.cardOptions || {}) }, slots };
   }
 
   function loadPrefs() {
@@ -382,7 +401,7 @@
       const found = lineup.slots.find((s) => s.id === lineup.selectedSlotId);
       if (found) return found;
     }
-    return lineup.slots.find((s) => s.name.trim()) || lineup.slots[0] || null;
+    return lineup.slots.find((s) => (s.name || "").trim()) || lineup.slots[0] || null;
   }
   function uuid() { return crypto.randomUUID ? crypto.randomUUID() : "id-" + Date.now() + "-" + Math.random().toString(36).slice(2, 9); }
   function exportData() {

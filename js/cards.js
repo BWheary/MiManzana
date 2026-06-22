@@ -54,8 +54,8 @@
 
   function renderPrintColumn(slots, options) {
     const ordered = slots.slice().sort((a, b) => a.order - b.order);
-    const filled = ordered.filter((s) => s.name.trim());
-    const cards = ordered.map((s) => (s.name.trim()
+    const filled = ordered.filter((s) => (s.name || "").trim());
+    const cards = ordered.map((s) => ((s.name || "").trim()
       ? buildMiniPreviewCard(s)
       : `<div class="mini-card mini-card-empty" aria-hidden="true"></div>`)).join("");
     return `<div class="preview-grid-wrap">
@@ -69,9 +69,9 @@
 
   function renderPrintSheet(slots) {
     const ordered = slots.slice().sort((a, b) => a.order - b.order);
-    const filled = ordered.filter((s) => s.name.trim());
+    const filled = ordered.filter((s) => (s.name || "").trim());
     if (!filled.length) return "";
-    const cards = ordered.map((s) => (s.name.trim()
+    const cards = ordered.map((s) => ((s.name || "").trim()
       ? buildMiniPreviewCard(s, true)
       : `<div class="mini-card mini-card-empty" aria-hidden="true"></div>`)).join("");
     return `<article class="lineup-print-sheet">
