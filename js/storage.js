@@ -24,6 +24,8 @@
   }
   let state = null;
   let applyingRemote = false;
+  let batching = false;
+  let pendingPush = false;
 
   function mergeLineup(raw) {
     return { ...defaultLineup(), ...raw, cardOptions: { ...defaultCardOptions(), ...(raw?.cardOptions || {}) }, slots: raw?.slots || [] };
@@ -50,14 +52,29 @@
     }));
   }
 
+  function hydrateLineupPhotos(shared) {
+    ["blue", "orange"].forEach((team) => {
+      const roster = shared.teams[team] || [];
+      const lineup = shared.lineups[team];
+      if (!lineup?.slots) return;
+      lineup.slots.forEach((slot) => {
+        if (!slot.playerId) return;
+        const player = roster.find((p) => p.id === slot.playerId);
+        if (player?.photo) slot.photo = player.photo;
+      });
+    });
+    return shared;
+  }
+
   function normalizeShared(parsed) {
-    return {
+    const shared = {
       teams: { blue: parsed?.teams?.blue || [], orange: parsed?.teams?.orange || [] },
       lineups: {
         blue: mergeLineup(parsed?.lineups?.blue),
         orange: mergeLineup(parsed?.lineups?.orange)
       }
     };
+    return hydrateLineupPhotos(shared);
   }
 
   function buildState(shared, prefs) {
@@ -96,6 +113,13 @@
     if (changed && !applyingRemote) save();
   }
 
+  function stripLineupPhotos(lineup) {
+    return {
+      ...lineup,
+      slots: (lineup.slots || []).map((slot) => ({ ...slot, photo: "" }))
+    };
+  }
+
   function extractShared() {
     const s = getState();
     return {
@@ -104,13 +128,39 @@
     };
   }
 
+  function extractSharedForRemote() {
+    const shared = extractShared();
+    return {
+      teams: shared.teams,
+      lineups: {
+        blue: stripLineupPhotos(shared.lineups.blue),
+        orange: stripLineupPhotos(shared.lineups.orange)
+      }
+    };
+  }
+
+  function pushToFirebase() {
+    pendingPush = false;
+    if (!state || applyingRemote || !global.MiManzana.FirebaseSync?.isConfigured()) return;
+    const payload = extractSharedForRemote();
+    global.MiManzana.FirebaseSync.pushShared(payload).catch((err) => {
+      console.error("Firebase save failed:", err);
+      global.MiManzana?.App?.setSyncStatus?.("error");
+      const msg = err?.code === "invalid-argument" || String(err?.message || "").includes("longer than")
+        ? "Could not sync to cloud — data may be too large. Try removing some photos."
+        : "Could not sync to cloud. Your changes are saved on this device only.";
+      alert(msg);
+    });
+  }
+
   function applyRemoteShared(remote) {
     if (!remote) return false;
+    if (global.MiManzana.FirebaseSync?.shouldIgnoreRemote?.()) return false;
     applyingRemote = true;
     const prefs = { activeTeam: getState().activeTeam, activeNav: getState().activeNav };
     const shared = normalizeShared(remote);
     state = buildState(shared, prefs);
-    cacheShared(shared);
+    cacheShared(extractShared());
     applyingRemote = false;
     return true;
   }
@@ -127,9 +177,27 @@
     const shared = extractShared();
     cacheShared(shared);
     savePrefs();
-    if (!applyingRemote && global.MiManzana.FirebaseSync?.isConfigured()) {
-      global.MiManzana.FirebaseSync.pushShared(shared).catch(() => {});
+    if (applyingRemote || !global.MiManzana.FirebaseSync?.isConfigured()) return;
+    if (batching) {
+      pendingPush = true;
+      return;
     }
+    pushToFirebase();
+  }
+
+  function beginBatch() {
+    batching = true;
+    pendingPush = false;
+  }
+
+  function endBatch() {
+    batching = false;
+    if (pendingPush) pushToFirebase();
+  }
+
+  function runBatch(fn) {
+    beginBatch();
+    try { fn(); } finally { endBatch(); }
   }
 
   function getState() { if (!state) load(); return state; }
@@ -181,6 +249,6 @@
   global.MiManzana.Storage = {
     load, save, getState, getTeam, setTeam, getNav, setNav, getRoster, setRoster, getLineup, setLineup,
     getSelectedSlot, findPlayer, uuid, exportData, importData, defaultCardOptions, todayIso,
-    extractShared, applyRemoteShared, syncLineupDatesToToday
+    extractShared, extractSharedForRemote, applyRemoteShared, syncLineupDatesToToday, runBatch, beginBatch, endBatch
   };
 })(window);

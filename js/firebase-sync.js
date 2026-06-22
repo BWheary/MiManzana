@@ -1,11 +1,12 @@
 (function (global) {
   const DOC_COLLECTION = "academy";
   const DOC_ID = "main";
+  const REMOTE_SUPPRESS_MS = 3000;
 
   let db = null;
   let unsubscribe = null;
   let onRemoteUpdate = null;
-  let ignoreSnapshots = 0;
+  let suppressRemoteUntil = 0;
   let ready = false;
   let mode = "local";
 
@@ -14,19 +15,25 @@
     return !!(c && c.apiKey && c.projectId);
   }
 
+  function shouldIgnoreRemote() {
+    return Date.now() < suppressRemoteUntil;
+  }
+
   function docRef() {
     return db.collection(DOC_COLLECTION).doc(DOC_ID);
   }
 
   function pushShared(shared) {
     if (!db) return Promise.resolve();
-    ignoreSnapshots++;
+    suppressRemoteUntil = Date.now() + REMOTE_SUPPRESS_MS;
     return docRef().set({
       teams: shared.teams,
       lineups: shared.lineups,
       updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(() => {
+      suppressRemoteUntil = Date.now() + REMOTE_SUPPRESS_MS;
     }).catch((err) => {
-      ignoreSnapshots = Math.max(0, ignoreSnapshots - 1);
+      suppressRemoteUntil = 0;
       console.error("Firebase save failed:", err);
       throw err;
     });
@@ -57,10 +64,7 @@
 
     unsubscribe = docRef().onSnapshot((snap) => {
       if (!snap.exists) return;
-      if (ignoreSnapshots > 0) {
-        ignoreSnapshots--;
-        return;
-      }
+      if (shouldIgnoreRemote()) return;
       const data = snap.data();
       if (data && onRemoteUpdate) onRemoteUpdate(data);
     }, (err) => {
@@ -68,7 +72,7 @@
       global.MiManzana?.App?.setSyncStatus?.("error");
     });
 
-    const shared = global.MiManzana.Storage.extractShared();
+    const shared = global.MiManzana.Storage.extractSharedForRemote();
     seedIfEmpty(shared)
       .then(() => docRef().get())
       .then((snap) => {
@@ -92,6 +96,6 @@
 
   global.MiManzana = global.MiManzana || {};
   global.MiManzana.FirebaseSync = {
-    init, pushShared, isConfigured, isReady: () => ready, getMode: () => mode, destroy
+    init, pushShared, isConfigured, isReady: () => ready, getMode: () => mode, shouldIgnoreRemote, destroy
   };
 })(window);

@@ -207,9 +207,11 @@
     } else {
       roster.push({ id: Storage.uuid(), name, jersey: "", position: "", zone, batterHand, photo, notes: [] });
     }
-    Storage.setRoster(team, roster);
     const savedId = editId || roster[roster.length - 1]?.id;
-    if (savedId) global.MiManzana.Lineup.syncRosterPlayerToLineup(team, savedId);
+    Storage.runBatch(() => {
+      Storage.setRoster(team, roster);
+      if (savedId) global.MiManzana.Lineup.syncRosterPlayerToLineup(team, savedId);
+    });
     resetRosterForm();
     closePlayerPool();
     global.MiManzana.App.refresh();
@@ -289,10 +291,12 @@
     const player = roster.find((p) => p.id === id);
     if (!player) return;
     const destRoster = Storage.getRoster(targetTeam);
-    Storage.setRoster(fromTeam, roster.filter((p) => p.id !== id));
-    destRoster.push({ ...player });
-    Storage.setRoster(targetTeam, destRoster);
-    clearPlayerFromLineup(fromTeam, id);
+    Storage.runBatch(() => {
+      Storage.setRoster(fromTeam, roster.filter((p) => p.id !== id));
+      destRoster.push({ ...player });
+      Storage.setRoster(targetTeam, destRoster);
+      clearPlayerFromLineup(fromTeam, id);
+    });
     resetRosterForm();
     closePlayerPool();
     global.MiManzana.App.refresh();

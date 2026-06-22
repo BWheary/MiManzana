@@ -122,7 +122,7 @@
   }
 
   function handleRemoteUpdate(shared) {
-    Storage.applyRemoteShared(shared);
+    if (!Storage.applyRemoteShared(shared)) return;
     if (!bootstrapped) return;
     refreshCurrentView();
   }
