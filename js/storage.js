@@ -1,5 +1,7 @@
 (function (global) {
   const STORAGE_KEY = "mi-manzana-data";
+  const PREFS_KEY = "mi-manzana-prefs";
+
   function todayIso() {
     const d = new Date();
     const y = d.getFullYear();
@@ -21,9 +23,66 @@
     return { teams: { blue: [], orange: [] }, lineups: { blue: defaultLineup(), orange: defaultLineup() }, activeTeam: "orange", activeNav: "home" };
   }
   let state = null;
+  let applyingRemote = false;
+
   function mergeLineup(raw) {
     return { ...defaultLineup(), ...raw, cardOptions: { ...defaultCardOptions(), ...(raw?.cardOptions || {}) }, slots: raw?.slots || [] };
   }
+
+  function loadPrefs() {
+    try {
+      const raw = localStorage.getItem(PREFS_KEY);
+      if (!raw) return { activeTeam: "orange", activeNav: "home" };
+      const parsed = JSON.parse(raw);
+      return {
+        activeTeam: parsed.activeTeam === "blue" ? "blue" : "orange",
+        activeNav: normalizeNav(parsed.activeNav)
+      };
+    } catch {
+      return { activeTeam: "orange", activeNav: "home" };
+    }
+  }
+
+  function savePrefs() {
+    localStorage.setItem(PREFS_KEY, JSON.stringify({
+      activeTeam: getState().activeTeam,
+      activeNav: getState().activeNav
+    }));
+  }
+
+  function normalizeShared(parsed) {
+    return {
+      teams: { blue: parsed?.teams?.blue || [], orange: parsed?.teams?.orange || [] },
+      lineups: {
+        blue: mergeLineup(parsed?.lineups?.blue),
+        orange: mergeLineup(parsed?.lineups?.orange)
+      }
+    };
+  }
+
+  function buildState(shared, prefs) {
+    return {
+      ...defaultData(),
+      ...prefs,
+      teams: shared.teams,
+      lineups: shared.lineups
+    };
+  }
+
+  function cacheShared(shared) {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(shared));
+  }
+
+  function loadSharedFromCache() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return normalizeShared(defaultData());
+      return normalizeShared(JSON.parse(raw));
+    } catch {
+      return normalizeShared(defaultData());
+    }
+  }
+
   function syncLineupDatesToToday() {
     const today = todayIso();
     let changed = false;
@@ -34,29 +93,50 @@
         changed = true;
       }
     });
-    if (changed) save();
+    if (changed && !applyingRemote) save();
   }
+
+  function extractShared() {
+    const s = getState();
+    return {
+      teams: { blue: s.teams.blue || [], orange: s.teams.orange || [] },
+      lineups: { blue: s.lineups.blue, orange: s.lineups.orange }
+    };
+  }
+
+  function applyRemoteShared(remote) {
+    if (!remote) return false;
+    applyingRemote = true;
+    const prefs = { activeTeam: getState().activeTeam, activeNav: getState().activeNav };
+    const shared = normalizeShared(remote);
+    state = buildState(shared, prefs);
+    cacheShared(shared);
+    applyingRemote = false;
+    return true;
+  }
+
   function load() {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) { state = defaultData(); syncLineupDatesToToday(); return state; }
-      const parsed = JSON.parse(raw);
-      state = {
-        ...defaultData(), ...parsed,
-        activeNav: normalizeNav(parsed.activeNav || parsed.activeTab),
-        teams: { blue: parsed.teams?.blue || [], orange: parsed.teams?.orange || [] },
-        lineups: { blue: mergeLineup(parsed.lineups?.blue), orange: mergeLineup(parsed.lineups?.orange) }
-      };
-      syncLineupDatesToToday();
-    } catch { state = defaultData(); }
+    const prefs = loadPrefs();
+    const shared = loadSharedFromCache();
+    state = buildState(shared, prefs);
     return state;
   }
-  function save() { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
+
+  function save() {
+    if (!state) return;
+    const shared = extractShared();
+    cacheShared(shared);
+    savePrefs();
+    if (!applyingRemote && global.MiManzana.FirebaseSync?.isConfigured()) {
+      global.MiManzana.FirebaseSync.pushShared(shared).catch(() => {});
+    }
+  }
+
   function getState() { if (!state) load(); return state; }
   function getTeam() { return getState().activeTeam; }
-  function setTeam(team) { getState().activeTeam = team; save(); }
+  function setTeam(team) { getState().activeTeam = team; savePrefs(); }
   function getNav() { return normalizeNav(getState().activeNav); }
-  function setNav(nav) { getState().activeNav = normalizeNav(nav); save(); }
+  function setNav(nav) { getState().activeNav = normalizeNav(nav); savePrefs(); }
   function getRoster(team) { return getState().teams[team] || []; }
   function setRoster(team, players) { getState().teams[team] = players; save(); }
   function getLineup(team) { return getState().lineups[team]; }
@@ -84,14 +164,23 @@
       reader.onload = () => {
         try {
           const parsed = JSON.parse(reader.result);
-          state = { ...defaultData(), ...parsed, teams: { blue: parsed.teams?.blue || [], orange: parsed.teams?.orange || [] }, lineups: { blue: mergeLineup(parsed.lineups?.blue), orange: mergeLineup(parsed.lineups?.orange) } };
-          syncLineupDatesToToday();
-          save(); resolve(state);
+          const prefs = {
+            activeTeam: parsed.activeTeam === "blue" ? "blue" : "orange",
+            activeNav: normalizeNav(parsed.activeNav || parsed.activeTab)
+          };
+          state = buildState(normalizeShared(parsed), prefs);
+          save();
+          resolve(state);
         } catch (e) { reject(e); }
       };
       reader.onerror = reject; reader.readAsText(file);
     });
   }
+
   global.MiManzana = global.MiManzana || {};
-  global.MiManzana.Storage = { load, save, getState, getTeam, setTeam, getNav, setNav, getRoster, setRoster, getLineup, setLineup, getSelectedSlot, findPlayer, uuid, exportData, importData, defaultCardOptions, todayIso };
+  global.MiManzana.Storage = {
+    load, save, getState, getTeam, setTeam, getNav, setNav, getRoster, setRoster, getLineup, setLineup,
+    getSelectedSlot, findPlayer, uuid, exportData, importData, defaultCardOptions, todayIso,
+    extractShared, applyRemoteShared, syncLineupDatesToToday
+  };
 })(window);

@@ -3,6 +3,9 @@
   const Lineup = global.MiManzana.Lineup;
   const Roster = global.MiManzana.Roster;
   const Cards = global.MiManzana.Cards;
+  const FirebaseSync = global.MiManzana.FirebaseSync;
+
+  let bootstrapped = false;
 
   function renderGameReports() {
     const team = Storage.getTeam();
@@ -27,6 +30,19 @@
     document.querySelectorAll(".team-btn").forEach((btn) => {
       btn.classList.toggle("active", btn.dataset.team === team);
     });
+  }
+
+  function setSyncStatus(status) {
+    const el = document.getElementById("sync-status");
+    if (!el) return;
+    el.dataset.status = status;
+    const labels = {
+      loading: "Connecting…",
+      live: "Live sync",
+      local: "Local only",
+      error: "Sync error"
+    };
+    el.textContent = labels[status] || status;
   }
 
   function render() {
@@ -93,9 +109,17 @@
     setTimeout(() => { document.body.classList.remove("printing"); container.innerHTML = ""; }, 500);
   }
 
-  function init() {
-    Storage.load();
+  function handleRemoteUpdate(shared) {
+    Storage.applyRemoteShared(shared);
+    if (!bootstrapped) return;
     ["blue", "orange"].forEach((t) => Lineup.ensureLineupForTeam(t));
+    render();
+  }
+
+  function bootstrapApp(info) {
+    bootstrapped = true;
+    ["blue", "orange"].forEach((t) => Lineup.ensureLineupForTeam(t));
+    Storage.syncLineupDatesToToday();
     document.querySelectorAll(".sidebar-nav-item:not(.disabled)").forEach((btn) => {
       btn.addEventListener("click", () => setActiveNav(btn.dataset.nav));
     });
@@ -108,9 +132,21 @@
     window.addEventListener("beforeprint", () => document.body.classList.add("printing"));
     window.addEventListener("afterprint", () => document.body.classList.remove("printing"));
     setActiveNav(Storage.getNav() || "home");
+    if (info.mode === "firebase" && !info.error) setSyncStatus("live");
+    else if (info.error) setSyncStatus("error");
+    else setSyncStatus("local");
+  }
+
+  function init() {
+    setSyncStatus("loading");
+    Storage.load();
+    FirebaseSync.init(
+      (info) => bootstrapApp(info),
+      (shared) => handleRemoteUpdate(shared)
+    );
   }
 
   global.MiManzana = global.MiManzana || {};
-  global.MiManzana.App = { init, render, refresh: render, refreshDashboard, updatePreviewOnly, printCards };
+  global.MiManzana.App = { init, render, refresh: render, refreshDashboard, updatePreviewOnly, printCards, setSyncStatus };
   document.addEventListener("DOMContentLoaded", init);
 })(window);

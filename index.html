@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"/>
@@ -43,13 +43,20 @@
           Game Reports
         </button>
       </nav>
-      <div class="sidebar-footer"><span class="hit-your-manzana">HIT YOUR<br/>MANZANA</span></div>
+      <div class="sidebar-footer">
+        <span class="hit-your-manzana">HIT YOUR<br/>MANZANA</span>
+        <span class="sync-status" id="sync-status" data-status="loading">Connecting…</span>
+      </div>
     </aside>
     <main class="app-main" id="main-content"></main>
   </div>
   <div id="print-container" class="print-container" aria-hidden="true"></div>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <script src="js/firebase-config.js"></script>
   <script src="js/zones.js"></script>
   <script src="js/storage.js"></script>
+  <script src="js/firebase-sync.js"></script>
   <script src="js/cards.js"></script>
   <script src="js/roster.js"></script>
   <script src="js/lineup.js"></script>
