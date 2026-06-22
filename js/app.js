@@ -121,8 +121,8 @@
     }
   }
 
-  function handleRemoteUpdate(shared) {
-    if (!Storage.applyRemoteShared(shared)) return;
+  function handleRemoteUpdate(shared, photos) {
+    if (!Storage.applyRemoteShared(shared, photos)) return;
     if (!bootstrapped) return;
     refreshCurrentView();
   }

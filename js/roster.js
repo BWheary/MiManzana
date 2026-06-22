@@ -176,7 +176,7 @@
     reader.onload = () => {
       const img = new Image();
       img.onload = () => {
-        const max = 200;
+        const max = 128;
         const scale = Math.min(1, max / Math.max(img.width, img.height));
         const w = Math.round(img.width * scale);
         const h = Math.round(img.height * scale);
@@ -184,7 +184,7 @@
         canvas.width = w;
         canvas.height = h;
         canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-        rosterFormPhoto = canvas.toDataURL("image/jpeg", 0.85);
+        rosterFormPhoto = canvas.toDataURL("image/jpeg", 0.75);
         updatePhotoPreview();
       };
       img.src = reader.result;
@@ -214,7 +214,7 @@
     });
     resetRosterForm();
     closePlayerPool();
-    global.MiManzana.App.refresh();
+    if (!refreshRosterGrid()) global.MiManzana.App.refresh();
   }
 
   function openPlayerPool() {
@@ -299,14 +299,14 @@
     });
     resetRosterForm();
     closePlayerPool();
-    global.MiManzana.App.refresh();
+    if (!refreshRosterGrid()) global.MiManzana.App.refresh();
   }
 
   function deletePlayer(id) {
     if (!confirm("Remove this player from the roster?")) return;
     const team = Storage.getTeam();
     Storage.setRoster(team, Storage.getRoster(team).filter((p) => p.id !== id));
-    global.MiManzana.App.refresh();
+    if (!refreshRosterGrid()) global.MiManzana.App.refresh();
   }
 
   function bindEvents() {

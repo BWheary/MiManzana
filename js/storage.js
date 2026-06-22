@@ -26,6 +26,7 @@
   let applyingRemote = false;
   let batching = false;
   let pendingPush = false;
+  let localRevision = 0;
 
   function mergeLineup(raw) {
     return { ...defaultLineup(), ...raw, cardOptions: { ...defaultCardOptions(), ...(raw?.cardOptions || {}) }, slots: raw?.slots || [] };
@@ -52,7 +53,22 @@
     }));
   }
 
-  function hydrateLineupPhotos(shared) {
+  function rosterPlayerCount(shared) {
+    return (shared.teams?.blue?.length || 0) + (shared.teams?.orange?.length || 0);
+  }
+
+  function hydrateSlotFromPlayer(slot, player) {
+    if (!player) return;
+    slot.playerId = player.id;
+    slot.name = player.name;
+    slot.jersey = player.jersey || "";
+    slot.zone = global.MiManzana.Zones.getZone(player.zone || "middle").id;
+    slot.batterHand = global.MiManzana.Zones.normalizeBatterHand(player.batterHand);
+    slot.photo = player.photo || "";
+    slot.notes = [...(player.notes || ["", ""])];
+  }
+
+  function hydrateLineupFromRoster(shared) {
     ["blue", "orange"].forEach((team) => {
       const roster = shared.teams[team] || [];
       const lineup = shared.lineups[team];
@@ -60,21 +76,43 @@
       lineup.slots.forEach((slot) => {
         if (!slot.playerId) return;
         const player = roster.find((p) => p.id === slot.playerId);
-        if (player?.photo) slot.photo = player.photo;
+        if (player) hydrateSlotFromPlayer(slot, player);
       });
     });
     return shared;
   }
 
-  function normalizeShared(parsed) {
-    const shared = {
+  function mergePhotosIntoRoster(shared, photos) {
+    if (!photos) return shared;
+    ["blue", "orange"].forEach((team) => {
+      const teamPhotos = photos[team] || {};
+      (shared.teams[team] || []).forEach((player) => {
+        if (teamPhotos[player.id]) player.photo = teamPhotos[player.id];
+      });
+    });
+    return shared;
+  }
+
+  function extractPhotos() {
+    const photos = { blue: {}, orange: {} };
+    ["blue", "orange"].forEach((team) => {
+      (getState().teams[team] || []).forEach((player) => {
+        if (player.photo) photos[team][player.id] = player.photo;
+      });
+    });
+    return photos;
+  }
+
+  function normalizeShared(parsed, photos) {
+    let shared = {
       teams: { blue: parsed?.teams?.blue || [], orange: parsed?.teams?.orange || [] },
       lineups: {
         blue: mergeLineup(parsed?.lineups?.blue),
         orange: mergeLineup(parsed?.lineups?.orange)
       }
     };
-    return hydrateLineupPhotos(shared);
+    shared = mergePhotosIntoRoster(shared, photos);
+    return hydrateLineupFromRoster(shared);
   }
 
   function buildState(shared, prefs) {
@@ -87,14 +125,17 @@
   }
 
   function cacheShared(shared) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(shared));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...shared, revision: localRevision }));
   }
 
   function loadSharedFromCache() {
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
       if (!raw) return normalizeShared(defaultData());
-      return normalizeShared(JSON.parse(raw));
+      const parsed = JSON.parse(raw);
+      localRevision = parsed.revision || 0;
+      const { revision: _rev, ...data } = parsed;
+      return normalizeShared(data);
     } catch {
       return normalizeShared(defaultData());
     }
@@ -113,11 +154,27 @@
     if (changed && !applyingRemote) save();
   }
 
-  function stripLineupPhotos(lineup) {
+  function slimSlot(slot) {
+    return {
+      id: slot.id,
+      order: slot.order,
+      playerId: slot.playerId || "",
+      zone: slot.zone || "middle",
+      zoneOverride: !!slot.zoneOverride,
+      selected: slot.selected !== false,
+      batterHand: slot.batterHand || "R"
+    };
+  }
+
+  function slimLineup(lineup) {
     return {
       ...lineup,
-      slots: (lineup.slots || []).map((slot) => ({ ...slot, photo: "" }))
+      slots: (lineup.slots || []).map(slimSlot)
     };
+  }
+
+  function stripRosterPhotos(roster) {
+    return (roster || []).map((player) => ({ ...player, photo: "" }));
   }
 
   function extractShared() {
@@ -131,19 +188,48 @@
   function extractSharedForRemote() {
     const shared = extractShared();
     return {
-      teams: shared.teams,
+      teams: {
+        blue: stripRosterPhotos(shared.teams.blue),
+        orange: stripRosterPhotos(shared.teams.orange)
+      },
       lineups: {
-        blue: stripLineupPhotos(shared.lineups.blue),
-        orange: stripLineupPhotos(shared.lineups.orange)
-      }
+        blue: slimLineup(shared.lineups.blue),
+        orange: slimLineup(shared.lineups.orange)
+      },
+      revision: localRevision
     };
+  }
+
+  function isRemoteStale(remote, local) {
+    const remoteRev = remote?.revision || 0;
+    if (remoteRev < localRevision) return true;
+    const localData = local || extractShared();
+    const remoteCount = rosterPlayerCount({ teams: remote.teams || {} });
+    const localCount = rosterPlayerCount(localData);
+    return remoteCount < localCount;
+  }
+
+  function sanitizeForFirestore(value) {
+    if (value === undefined) return undefined;
+    if (value === null || typeof value !== "object") return value;
+    if (Array.isArray(value)) return value.map(sanitizeForFirestore).filter((v) => v !== undefined);
+    const out = {};
+    Object.keys(value).forEach((key) => {
+      const v = sanitizeForFirestore(value[key]);
+      if (v !== undefined) out[key] = v;
+    });
+    return out;
   }
 
   function pushToFirebase() {
     pendingPush = false;
     if (!state || applyingRemote || !global.MiManzana.FirebaseSync?.isConfigured()) return;
-    const payload = extractSharedForRemote();
-    global.MiManzana.FirebaseSync.pushShared(payload).catch((err) => {
+    localRevision += 1;
+    cacheShared(extractShared());
+    const payload = sanitizeForFirestore(extractSharedForRemote());
+    const photos = sanitizeForFirestore(extractPhotos());
+    global.MiManzana.FirebaseSync.pushShared(payload, photos).catch((err) => {
+      localRevision = Math.max(0, localRevision - 1);
       console.error("Firebase save failed:", err);
       global.MiManzana?.App?.setSyncStatus?.("error");
       const msg = err?.code === "invalid-argument" || String(err?.message || "").includes("longer than")
@@ -153,16 +239,29 @@
     });
   }
 
-  function applyRemoteShared(remote) {
+  function applyRemoteShared(remote, photos) {
     if (!remote) return false;
     if (global.MiManzana.FirebaseSync?.shouldIgnoreRemote?.()) return false;
+    const local = extractShared();
+    if (isRemoteStale(remote, local)) {
+      pushToFirebase();
+      return false;
+    }
+    if (typeof remote.revision === "number" && remote.revision > localRevision) {
+      localRevision = remote.revision;
+    }
     applyingRemote = true;
     const prefs = { activeTeam: getState().activeTeam, activeNav: getState().activeNav };
-    const shared = normalizeShared(remote);
+    const shared = normalizeShared(remote, photos);
     state = buildState(shared, prefs);
     cacheShared(extractShared());
     applyingRemote = false;
     return true;
+  }
+
+  function shouldPreferLocalOverRemote(remote, photos) {
+    const local = extractShared();
+    return isRemoteStale(remote, local);
   }
 
   function load() {
@@ -249,6 +348,7 @@
   global.MiManzana.Storage = {
     load, save, getState, getTeam, setTeam, getNav, setNav, getRoster, setRoster, getLineup, setLineup,
     getSelectedSlot, findPlayer, uuid, exportData, importData, defaultCardOptions, todayIso,
-    extractShared, extractSharedForRemote, applyRemoteShared, syncLineupDatesToToday, runBatch, beginBatch, endBatch
+    extractShared, extractSharedForRemote, applyRemoteShared, shouldPreferLocalOverRemote, pushToFirebase,
+    syncLineupDatesToToday, runBatch, beginBatch, endBatch
   };
 })(window);
