@@ -1,0 +1,134 @@
+﻿@media print {
+  @page { size: 4in 6in; margin: 0.2in; }
+  body.printing { font-family: 'Poppins', system-ui, sans-serif; margin: 0; padding: 0; }
+  body.printing .app-shell { display: none !important; }
+  body.printing .print-container {
+    display: flex !important;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    background: #fff;
+    margin: 0;
+    padding: 0;
+  }
+  body.printing .lineup-print-sheet {
+    width: 3.6in;
+    height: 5.6in;
+    margin: 0 auto;
+    padding: 0.1in;
+    box-sizing: border-box;
+    border: 1.5px solid #0f1729;
+    border-radius: 5px;
+    break-inside: avoid;
+    page-break-after: avoid;
+    overflow: hidden;
+  }
+  body.printing .lineup-print-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    grid-template-rows: repeat(3, 1fr);
+    gap: 0.05in;
+    width: 100%;
+    height: 100%;
+  }
+  body.printing .lineup-print-grid .mini-card {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    background: #fff;
+    border: 1px solid #cbd5e1;
+    border-radius: 3px;
+    padding: 0.02in 0.03in 0.02in;
+    overflow: hidden;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    min-height: 0;
+  }
+  body.printing .lineup-print-grid .mini-card-empty {
+    border: 1px dashed #e2e8f0;
+    background: transparent;
+    box-shadow: none;
+  }
+  body.printing .lineup-print-grid .mini-card-identity {
+    display: grid;
+    grid-template-columns: 0.14in 1fr 0.14in;
+    align-items: center;
+    column-gap: 0.02in;
+    width: 100%;
+    border-bottom: 1px solid #0f1729;
+    padding-bottom: 0.015in;
+    margin-bottom: 0.015in;
+    min-height: 0.15in;
+    flex-shrink: 0;
+  }
+  body.printing .lineup-print-grid .mini-card-photo {
+    width: 0.14in;
+    height: 0.14in;
+    border-radius: 50%;
+    overflow: hidden;
+    border: 1px solid #cbd5e1;
+    grid-column: 1;
+    justify-self: start;
+    align-self: center;
+  }
+  body.printing .lineup-print-grid .mini-card-photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+  body.printing .lineup-print-grid .mini-card-photo-fallback {
+    background: #f1f5f9;
+  }
+  body.printing .lineup-print-grid .card-header {
+    grid-column: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.02in;
+    padding: 0;
+    margin: 0;
+    border: none;
+    flex-wrap: nowrap;
+    width: 100%;
+    min-width: 0;
+    text-align: center;
+  }
+  body.printing .lineup-print-grid .card-order {
+    font-size: 4.5pt;
+    color: #64748b;
+    flex-shrink: 0;
+    line-height: 1;
+  }
+  body.printing .lineup-print-grid .card-name {
+    font-size: 4.5pt;
+    font-weight: 800;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  body.printing .lineup-print-grid .card-zone {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    width: 100%;
+    min-height: 0;
+    overflow: hidden;
+    padding: 0;
+  }
+  body.printing .lineup-print-grid .zone-svg {
+    height: 100% !important;
+    width: auto !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    display: block;
+    margin: 0 auto;
+  }
+  .zone-preference,.zone-manzana-path,.zone-border,.zone-grid-line,.zone-badge { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+}
