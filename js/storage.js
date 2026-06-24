@@ -83,8 +83,122 @@
     return ids;
   }
 
+  function mergeRosterTeams(cloudRoster, localRoster) {
+    const byId = new Map();
+    (cloudRoster || []).forEach((p) => { if (p?.id) byId.set(p.id, { ...p }); });
+    (localRoster || []).forEach((p) => {
+      if (p?.id && !byId.has(p.id)) byId.set(p.id, { ...p });
+    });
+    return Array.from(byId.values());
+  }
+
+  function mergePhotosObjects(cloudPhotos, localPhotos, localShared) {
+    const out = { blue: { ...(cloudPhotos?.blue || {}) }, orange: { ...(cloudPhotos?.orange || {}) } };
+    ["blue", "orange"].forEach((team) => {
+      (localShared?.teams?.[team] || []).forEach((player) => {
+        const photo = localPhotos?.[team]?.[player.id];
+        if (photo && !out[team][player.id]) out[team][player.id] = photo;
+      });
+    });
+    return out;
+  }
+
+  function mergeSharedUnion(cloudShared, localShared, cloudPhotos, localPhotos) {
+    const merged = {
+      teams: {
+        blue: mergeRosterTeams(cloudShared.teams.blue, localShared?.teams?.blue),
+        orange: mergeRosterTeams(cloudShared.teams.orange, localShared?.teams?.orange)
+      },
+      lineups: {
+        blue: cloudShared.lineups?.blue?.slots?.length
+          ? cloudShared.lineups.blue
+          : (localShared?.lineups?.blue || defaultLineup()),
+        orange: cloudShared.lineups?.orange?.slots?.length
+          ? cloudShared.lineups.orange
+          : (localShared?.lineups?.orange || defaultLineup())
+      }
+    };
+    const photos = mergePhotosObjects(cloudPhotos, localPhotos, localShared);
+    return normalizeShared(merged, photos);
+  }
+
+  function localOnlyPlayerIds(remote, local) {
+    const remoteIds = rosterPlayerIds({ teams: remote?.teams || {} });
+    return [...rosterPlayerIds(local)].filter((id) => !remoteIds.has(id));
+  }
+
+  function sharedFromNormalizedForRemote(shared) {
+    return {
+      teams: {
+        blue: stripRosterPhotos(shared.teams.blue),
+        orange: stripRosterPhotos(shared.teams.orange)
+      },
+      lineups: {
+        blue: slimLineup(shared.lineups.blue),
+        orange: slimLineup(shared.lineups.orange)
+      },
+      revision: localRevision
+    };
+  }
+
+  function photosFromShared(shared) {
+    const photos = { blue: {}, orange: {} };
+    ["blue", "orange"].forEach((team) => {
+      (shared.teams[team] || []).forEach((player) => {
+        if (player.photo) photos[team][player.id] = player.photo;
+      });
+    });
+    return photos;
+  }
+
   function rosterPlayerCount(shared) {
     return (shared.teams?.blue?.length || 0) + (shared.teams?.orange?.length || 0);
+  }
+
+  function readCachedSnapshot() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      const { revision: rev, ...data } = parsed;
+      let photos = loadPhotosFromCache();
+      if (!photos) {
+        photos = { blue: {}, orange: {} };
+        ["blue", "orange"].forEach((team) => {
+          (data.teams?.[team] || []).forEach((player) => {
+            if (player?.photo) photos[team][player.id] = player.photo;
+          });
+        });
+      }
+      return { shared: normalizeShared(data, photos), photos, revision: rev || 0 };
+    } catch {
+      return null;
+    }
+  }
+
+  function initPrefsOnly() {
+    const prefs = loadPrefs();
+    state = buildState(normalizeShared(defaultData()), prefs);
+    localRevision = 0;
+    return state;
+  }
+
+  function loadFromCacheFallback() {
+    const prefs = loadPrefs();
+    const shared = loadSharedFromCache();
+    state = buildState(shared, prefs);
+    return state;
+  }
+
+  function getSeedPayload(cached) {
+    if (cached?.shared && rosterPlayerCount(cached.shared) > 0) {
+      localRevision = cached.revision || 0;
+      return {
+        shared: sharedFromNormalizedForRemote(cached.shared),
+        photos: photosFromShared(cached.shared)
+      };
+    }
+    return { shared: extractSharedForRemote(), photos: extractPhotos() };
   }
 
   function hydrateSlotFromPlayer(slot, player) {
@@ -280,19 +394,57 @@
     };
   }
 
-  function isRemoteStale(remote, local) {
-    const remoteRev = remote?.revision || 0;
-    if (remoteRev < localRevision) return true;
-    const localData = local || extractShared();
-    const remoteCount = rosterPlayerCount({ teams: remote.teams || {} });
-    const localCount = rosterPlayerCount(localData);
-    if (remoteCount < localCount) return true;
-    const localIds = rosterPlayerIds(localData);
-    const remoteIds = rosterPlayerIds({ teams: remote.teams || {} });
-    for (const id of localIds) {
-      if (!remoteIds.has(id)) return true;
+  function applyCloudFirstInit(remote, photos, cached) {
+    applyingRemote = true;
+    const prefs = loadPrefs();
+    const cloudShared = normalizeShared(remote, photos);
+    localRevision = remote.revision || 0;
+
+    let finalShared = cloudShared;
+    let needsPush = false;
+    if (cached?.shared) {
+      const extraIds = localOnlyPlayerIds(remote, cached.shared);
+      if (extraIds.length > 0) {
+        finalShared = mergeSharedUnion(cloudShared, cached.shared, photos, cached.photos);
+        needsPush = true;
+      }
     }
-    return false;
+
+    state = buildState(finalShared, prefs);
+    cacheShared();
+    applyingRemote = false;
+    if (needsPush) pushToFirebase();
+    return true;
+  }
+
+  function applyRemoteShared(remote, photos) {
+    if (!remote) return false;
+    if (global.MiManzana.FirebaseSync?.shouldIgnoreRemote?.()) return false;
+
+    const local = extractShared();
+    const cloudShared = normalizeShared(remote, photos);
+    const unsynced = localOnlyPlayerIds(remote, local);
+
+    let finalShared = cloudShared;
+    if (unsynced.length > 0) {
+      finalShared = mergeSharedUnion(cloudShared, local, photos, photosFromShared(local));
+    }
+
+    const remoteRev = remote.revision || 0;
+    if (remoteRev >= localRevision) localRevision = remoteRev;
+
+    applyingRemote = true;
+    const prefs = { activeTeam: getState().activeTeam, activeNav: getState().activeNav };
+    state = buildState(finalShared, prefs);
+    cacheShared();
+    applyingRemote = false;
+
+    if (unsynced.length > 0) pushToFirebase();
+    return true;
+  }
+
+  function load() {
+    return loadFromCacheFallback();
   }
 
   function sanitizeForFirestore(value) {
@@ -326,38 +478,6 @@
     });
   }
 
-  function applyRemoteShared(remote, photos) {
-    if (!remote) return false;
-    if (global.MiManzana.FirebaseSync?.shouldIgnoreRemote?.()) return false;
-    const local = extractShared();
-    if (isRemoteStale(remote, local)) {
-      pushToFirebase();
-      return false;
-    }
-    if (typeof remote.revision === "number" && remote.revision > localRevision) {
-      localRevision = remote.revision;
-    }
-    applyingRemote = true;
-    const prefs = { activeTeam: getState().activeTeam, activeNav: getState().activeNav };
-    const shared = normalizeShared(remote, photos);
-    state = buildState(shared, prefs);
-    cacheShared();
-    applyingRemote = false;
-    return true;
-  }
-
-  function shouldPreferLocalOverRemote(remote, photos) {
-    const local = extractShared();
-    return isRemoteStale(remote, local);
-  }
-
-  function load() {
-    const prefs = loadPrefs();
-    const shared = loadSharedFromCache();
-    state = buildState(shared, prefs);
-    return state;
-  }
-
   function save() {
     if (!state) return;
     cacheShared();
@@ -385,7 +505,7 @@
     try { fn(); } finally { endBatch(); }
   }
 
-  function getState() { if (!state) load(); return state; }
+  function getState() { if (!state) initPrefsOnly(); return state; }
   function getTeam() { return getState().activeTeam; }
   function setTeam(team) { getState().activeTeam = team; savePrefs(); }
   function getNav() { return normalizeNav(getState().activeNav); }
@@ -434,7 +554,8 @@
   global.MiManzana.Storage = {
     load, save, getState, getTeam, setTeam, getNav, setNav, getRoster, setRoster, getLineup, setLineup,
     getSelectedSlot, findPlayer, uuid, exportData, importData, defaultCardOptions, todayIso,
-    extractShared, extractSharedForRemote, applyRemoteShared, shouldPreferLocalOverRemote, pushToFirebase,
+    extractShared, extractSharedForRemote, applyRemoteShared, applyCloudFirstInit, pushToFirebase,
+    initPrefsOnly, readCachedSnapshot, getSeedPayload, loadFromCacheFallback,
     syncLineupDatesToToday, runBatch, beginBatch, endBatch
   };
 })(window);

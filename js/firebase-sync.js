@@ -59,22 +59,20 @@
     });
   }
 
-  function deliverRemote(bundle) {
-    if (!bundle?.main || !onRemoteUpdate) return;
-    onRemoteUpdate(bundle.main, bundle.photos);
-  }
-
-  function seedIfEmpty(shared, photos) {
+  function seedIfEmpty(seedPayload) {
     if (!db) return Promise.resolve(false);
     return mainRef().get().then((snap) => {
       if (snap.exists) return false;
-      return pushShared(shared, photos).then(() => true);
+      return pushShared(seedPayload.shared, seedPayload.photos).then(() => true);
     });
   }
 
   function init(onReady, onUpdate) {
     onRemoteUpdate = onUpdate;
+    const Storage = global.MiManzana.Storage;
+
     if (!isConfigured()) {
+      Storage.loadFromCacheFallback();
       ready = true;
       mode = "local";
       onReady({ mode, configured: false });
@@ -88,6 +86,10 @@
     mode = "firebase";
     suppressRemoteUntil = Date.now() + 10000;
 
+    Storage.initPrefsOnly();
+    const cached = Storage.readCachedSnapshot();
+    const seedPayload = Storage.getSeedPayload(cached);
+
     unsubscribe = mainRef().onSnapshot((snap) => {
       if (!snap.exists || !initComplete) return;
       if (shouldIgnoreRemote()) return;
@@ -100,24 +102,13 @@
       global.MiManzana?.App?.setSyncStatus?.("error");
     });
 
-    const shared = global.MiManzana.Storage.extractSharedForRemote();
-    const photos = { blue: {}, orange: {} };
-    ["blue", "orange"].forEach((team) => {
-      global.MiManzana.Storage.getRoster(team).forEach((player) => {
-        if (player.photo) photos[team][player.id] = player.photo;
-      });
-    });
-
-    seedIfEmpty(shared, photos)
+    seedIfEmpty(seedPayload)
       .then(() => fetchRemoteBundle())
       .then((bundle) => {
         if (bundle) {
-          const Storage = global.MiManzana.Storage;
-          if (Storage.shouldPreferLocalOverRemote(bundle.main, bundle.photos)) {
-            Storage.pushToFirebase();
-          } else {
-            deliverRemote(bundle);
-          }
+          Storage.applyCloudFirstInit(bundle.main, bundle.photos, cached);
+        } else if (cached) {
+          Storage.loadFromCacheFallback();
         }
         initComplete = true;
         suppressRemoteUntil = Date.now() + REMOTE_SUPPRESS_MS;
@@ -126,6 +117,7 @@
       })
       .catch((err) => {
         console.error("Firebase init failed:", err);
+        Storage.loadFromCacheFallback();
         initComplete = true;
         ready = true;
         mode = "local";

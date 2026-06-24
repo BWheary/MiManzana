@@ -150,7 +150,6 @@
 
   function init() {
     setSyncStatus("loading");
-    Storage.load();
     FirebaseSync.init(
       (info) => bootstrapApp(info),
       (shared, photos) => handleRemoteUpdate(shared, photos)
